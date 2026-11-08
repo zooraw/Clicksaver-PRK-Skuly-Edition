@@ -3,6 +3,12 @@ ClickSaver for Anarchy Online
 
 This is an *unofficial* fork of ClickSaver (if you want to call the current situation as *official*) based on the latest available sources from AOU [1] and Darkbane [2].
 
+## Project Rubi-Ka Windows build
+
+This fork saves active and disabled item lists automatically and keeps a backup of the previous complete settings. Team mission rewards show the same item icons as solo rewards when you expand **Items**.
+
+Get the ZIP from the [latest release](https://github.com/zooraw/Clicksaver-PRK-Skuly-Edition/releases/latest) and follow the [installation guide](INSTALL.md).
+
 ## Quick history tour
 
 From what I could gather these were the official places/developers you could get CS from in the past. While lots of others contributed fixes and ideas throughout the lifetime. Correct me if I'm wrong.
