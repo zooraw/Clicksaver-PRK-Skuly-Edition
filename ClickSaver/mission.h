@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define CSM_MISSION_PARSEMISSION    CS_MISSIONCLASS_MTD + 1
 
 #define AODB_MAX_NAME_LEN 127
+#define MAX_VISIBLE_MISSION_REWARDS 6
 
 extern PUU8 g_bOverrideMatch;
 
@@ -61,7 +62,7 @@ typedef struct
     PUU8                    TimeStr[ 16 ];
     PUU8                    TypeStr[ 16 ];
     MissionItem             Reward;
-    PUU8*                   pImageData;
+    PUU8*                   rewardImages[1 + MAX_VISIBLE_MISSION_REWARDS];
 } MissionClassData;
 
 typedef struct
@@ -103,6 +104,12 @@ enum
     ITEMROW4,
     ITEMROW5,
     ITEMROW6,
+    TEAM_IMAGE1,
+    TEAM_IMAGE2,
+    TEAM_IMAGE3,
+    TEAM_IMAGE4,
+    TEAM_IMAGE5,
+    TEAM_IMAGE6,
 };
 
 PULID RegisterMissionClass();

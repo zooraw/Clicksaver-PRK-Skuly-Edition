@@ -69,6 +69,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <winuser.h>
 #include <shlobj.h>
 #include <stdio.h>
+#include <io.h>
 #include <string.h>
 #include <math.h>
 #include <commctrl.h>
@@ -102,8 +103,8 @@ int LoadItemNameCache(const char *cacheFilePath);
 void FreeItemNameCache(void);
 
 void CleanUp();
-void ImportSettings( char* filename );
-BOOL ExportSettings( char* filename );
+static BOOL ImportSettings(const char *filename);
+static BOOL ExportSettings(const char *filename, const char *backup);
 
 void DisplayErrorMessage( PUU8* _pMessage, PUU32 _bAsynchronous );
 
@@ -330,15 +331,42 @@ static IncomingMissionPacket* g_IncomingMissionPacketsHead = NULL;
 static IncomingMissionPacket* g_IncomingMissionPacketsTail = NULL;
 static size_t g_IncomingMissionPacketCount = 0;
 
-void BackupLastSettings(void)
+static BOOL IsCompleteSettingsFile(const char *filename)
 {
-    char srcPath[MAX_PATH];
-    char dstPath[MAX_PATH];
-    sprintf(srcPath, "%s\\LastSettings.cs", g_CSDir);
-    sprintf(dstPath, "%s\\LastSettings.bak", g_CSDir);
-    if (GetFileAttributesA(srcPath) != INVALID_FILE_ATTRIBUTES) {
-        CopyFileA(srcPath, dstPath, FALSE);  // overwrite existing backup
+    FILE *fp = fopen(filename, "r");
+    char line[1024];
+    BOOL hasItems = FALSE;
+    BOOL complete = FALSE;
+    if (!fp) return FALSE;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (_stricmp(line, "::ItemWatch::") == 0)
+            hasItems = TRUE;
+        if (_stricmp(line, "::END::") == 0 || _stricmp(line, "::Done::") == 0)
+            complete = hasItems;
     }
+    complete = complete && !ferror(fp);
+    fclose(fp);
+    return complete;
+}
+
+static BOOL SaveLastSettings(void)
+{
+    char settings[MAX_PATH + 24], backup[MAX_PATH + 24];
+    snprintf(settings, sizeof(settings), "%s\\LastSettings.cs", g_CSDir);
+    snprintf(backup, sizeof(backup), "%s\\LastSettings.bak", g_CSDir);
+    return ExportSettings(settings, backup);
+}
+
+static BOOL g_ItemSavePending = FALSE;
+
+static void QueueItemListSave(PUU32 attr, PUU32 value)
+{
+    // PUL sends this notification for edits as well as additions and removals.
+    // Save once after the UI action has finished updating both lists.
+    if (!g_ItemSavePending)
+        g_ItemSavePending = puPostAppMessage(CSAM_SAVE_SETTINGS, 0);
 }
 
 static LoggedMission* g_LoggedMissions = NULL;
@@ -1743,7 +1771,8 @@ static int ParseDisplayString(const char *display, char *itemName, size_t itemNa
             if (!end) end = p + strlen(p);
             size_t len = end - p;
             if (len > 0 && excludeWords && excludeSize > 0) {
-                strncpy(excludeWords, p, (len < excludeSize-1) ? len : excludeSize-1);
+                if (len >= excludeSize) len = excludeSize - 1;
+                strncpy(excludeWords, p, len);
                 excludeWords[len] = '\0';
                 for (char *c = excludeWords; *c; c++)
                     if (*c == ',') *c = ' ';
@@ -1985,10 +2014,36 @@ static int ItemExistsInActiveList(const char *displayString) {
 }
 
 static void ImportItemsFromFile(const char *filename, int replaceMode) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        DisplayErrorMessage("Cannot open file.", TRUE);
+        return;
+    }
+
+    // A full settings export starts with ::Config::. Find the item section
+    // before clearing the current list, even when Replace was selected.
+    char line[1024];
+    BOOL foundItems = FALSE;
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        trim_whitespace(line);
+        if (_stricmp(line, "::ItemWatch::") == 0) {
+            foundItems = TRUE;
+            break;
+        }
+    }
+    if (!foundItems) {
+        fclose(fp);
+        DisplayErrorMessage("The file does not contain an item list.", TRUE);
+        return;
+    }
+
     if (replaceMode) {
         if (ShowModalMessage(NULL, "Replace will delete all current items. Continue?", 
-                       "Confirm Replace", MB_YESNO) != IDYES)
+                       "Confirm Replace", MB_YESNO) != IDYES) {
+            fclose(fp);
             return;
+        }
         PUU32 record = puDoMethod(g_ItemWatchList, PUM_TABLE_GETFIRSTRECORD, 0, 0);
         while (record) {
             puDoMethod(g_ItemWatchList, PUM_TABLE_REMRECORD, record, 0);
@@ -1998,14 +2053,6 @@ static void ImportItemsFromFile(const char *filename, int replaceMode) {
         puSetAttribute(listView, PUA_LISTVIEW_SELECTED, -1);
     }
 
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        DisplayErrorMessage("Cannot open file.", TRUE);
-        return;
-    }
-
-    char line[1024];
-    int inItemSection = 0;
     int addedCount = 0;
     int duplicateCount = 0;
 
@@ -2013,13 +2060,8 @@ static void ImportItemsFromFile(const char *filename, int replaceMode) {
 		line[strcspn(line, "\r\n")] = '\0';
 		trim_whitespace(line);
 	
-		if (strcmp(line, "::ItemWatch::") == 0) {
-			inItemSection = 1;
-			continue;
-		}
-		if (strcmp(line, "::END::") == 0 || strncmp(line, "::", 2) == 0)
+		if (strncmp(line, "::", 2) == 0)
 			break;
-		if (!inItemSection) continue;
 	
 		if (strlen(line) == 0) continue;
 		
@@ -2610,11 +2652,31 @@ int main( int argc, char** argv )
 	g_LocWatchList = puGetObjectFromCollection( g_pCol, CS_LOCWATCH_LIST );
 	RefreshAIMissionClients();
 
-    GetCurrentDirectory( MAX_PATH, g_CSDir );
+    // Portable ClickSaver keeps its data beside the executable, even when
+    // a shortcut or terminal starts it with a different working directory.
+    DWORD exeLength = GetModuleFileNameA(NULL, g_CSDir, sizeof(g_CSDir));
+    char *exeName = exeLength && exeLength < sizeof(g_CSDir)
+        ? strrchr(g_CSDir, '\\') : NULL;
+    if (exeName) {
+        if (exeName == g_CSDir + 2) exeName++;
+        *exeName = '\0';
+    }
+    if (!exeName || !SetCurrentDirectoryA(g_CSDir)) {
+        MessageBoxA(NULL, "Could not open the ClickSaver installation folder.",
+            "ClickSaver", MB_OK | MB_ICONERROR);
+        CleanUp();
+        return -1;
+    }
 
-    ImportSettings( "LastSettings.cs" );
+    // An older install may have only an AODIR setting and no end marker.
+    // Prefer a complete backup, but still read that older format if needed.
+    const char *settingsFile = "LastSettings.cs";
+    if (!IsCompleteSettingsFile(settingsFile) &&
+        IsCompleteSettingsFile("LastSettings.bak"))
+        settingsFile = "LastSettings.bak";
+    ImportSettings(settingsFile);
 
-    g_AIAutoMode = DetectAIAutoMode( "LastSettings.cs" );
+    g_AIAutoMode = DetectAIAutoMode(settingsFile);
     SetAIMissionManualMode( !g_AIAutoMode );
     {
         PULID autoButtons = puGetObjectFromCollection( g_pCol, CS_AI_AUTO_BUTTONS );
@@ -2745,6 +2807,13 @@ int main( int argc, char** argv )
         CleanUp();
         return -1;
     }
+
+    PUU32 saveOnItemChange[] = {
+        PUNOTIFY_CONDITION_ATTRCHANGE, PUA_TABLE_NUMRECORDS,
+        PUNOTIFY_ACTION_CALLBACK, (PUU32)QueueItemListSave
+    };
+    puDoMethod(g_ItemWatchList, PUM_ADDNOTIFICATION, (PUU32)saveOnItemChange, 0);
+    puDoMethod(g_DisabledItemWatchList, PUM_ADDNOTIFICATION, (PUU32)saveOnItemChange, 0);
 
     do
     {
@@ -3320,14 +3389,8 @@ int main( int argc, char** argv )
 			}
 		case CSAM_SAVE_SETTINGS:
 		{
-			PULID computerLiteracyCtrl = puGetObjectFromCollection(g_pCol, CS_ITEMVALUE_COMPLIT);
-			if (!computerLiteracyCtrl) {
-				ShowModalMessage(NULL, "Could not access the Computer Literacy setting.",
-					"Save Failed", MB_OK | MB_ICONERROR);
-				break;
-			}
-
-			if (!SetCurrentDirectory(g_CSDir) || !ExportSettings("LastSettings.cs")) {
+			g_ItemSavePending = FALSE;
+			if (!SaveLastSettings()) {
 				ShowModalMessage(NULL, "Could not save settings to LastSettings.cs.",
 					"Save Failed", MB_OK | MB_ICONERROR);
 			}
@@ -3866,7 +3929,9 @@ int main( int argc, char** argv )
             if( GetFile( (HWND)puGetAttribute( puGetObjectFromCollection( g_pCol, CS_MAIN_WINDOW ), PUA_WINDOW_HANDLE )
                 , TRUE, buffer, 2000 ) )
             {
-                ExportSettings( buffer );
+                if (!ExportSettings(buffer, NULL))
+                    ShowModalMessage(NULL, "Could not export settings.",
+                        "Save Failed", MB_OK | MB_ICONERROR);
             }
             SetCurrentDirectory( g_CSDir );
         }
@@ -3878,7 +3943,9 @@ int main( int argc, char** argv )
             if( GetFile( (HWND)puGetAttribute( puGetObjectFromCollection( g_pCol, CS_MAIN_WINDOW ), PUA_WINDOW_HANDLE )
                 , FALSE, buffer, 2000 ) )
             {
-                ImportSettings( buffer );
+                if (!IsCompleteSettingsFile(buffer) || !ImportSettings(buffer))
+                    ShowModalMessage(NULL, "Could not read a complete settings file.",
+                        "Import Failed", MB_OK | MB_ICONERROR);
             }
             SetCurrentDirectory( g_CSDir );
         }
@@ -3971,9 +4038,9 @@ int main( int argc, char** argv )
         preserveAOHookForMonitor);
 
     WriteDebug( NULL );
-    SetCurrentDirectory( g_CSDir );
-	BackupLastSettings();
-    ExportSettings( "LastSettings.cs" );
+    if (!SaveLastSettings())
+        ShowModalMessage(NULL, "Could not save settings to LastSettings.cs.",
+            "Save Failed", MB_OK | MB_ICONERROR);
     CleanUp();
     return 0;
 }
@@ -4130,7 +4197,7 @@ struct
     { 0, NULL }
 };
 
-void ImportSettings( char* filename )
+static BOOL ImportSettings(const char *filename)
 {
     FILE* fp;
     PUU32 Record;
@@ -4143,6 +4210,9 @@ void ImportSettings( char* filename )
     int mode = ISM_DONE;
     char c;
     float floatVal;
+
+    if (!(fp = fopen(filename, "r")))
+        return FALSE;
 
     Record = puDoMethod( g_LocWatchList, PUM_TABLE_GETFIRSTRECORD, 0, 0 );
     while( Record )
@@ -4164,22 +4234,18 @@ void ImportSettings( char* filename )
         Record = puDoMethod( g_ItemWatchList, PUM_TABLE_GETFIRSTRECORD, 0, 0 );
     }
 
-    if( !( fp = fopen( filename, "r" ) ) )
-    {
-        return;
-    }
-
     while( fgets( buffer, 1000, fp ) )
     {
-        if( sscanf( buffer, "::%s", &buffer ) == 1 )
+        if (strncmp(buffer, "::", 2) == 0)
         {
-            strtok( buffer, ":" );
-            if( !_stricmp( buffer, "Config" ) ) mode = ISM_CONFIG;
-            if( !_stricmp( buffer, "LocWatch" ) ) mode = ISM_LOCWATCH;
-            if( !_stricmp( buffer, "ItemWatch" ) ) mode = ISM_ITEMWATCH;
-			if( !_stricmp( buffer, "DisabledItemWatch" ) ) mode = ISM_DISABLED_ITEMWATCH;
-            if( !_stricmp( buffer, "Sliders" ) ) mode = ISM_SLIDERS;
-            if( !_stricmp( buffer, "Done" ) ) mode = ISM_DONE;
+            char *section = strtok(buffer + 2, ":\r\n");
+            mode = ISM_DONE;
+            if (!section) continue;
+            if (_stricmp(section, "Config") == 0) mode = ISM_CONFIG;
+            if (_stricmp(section, "LocWatch") == 0) mode = ISM_LOCWATCH;
+            if (_stricmp(section, "ItemWatch") == 0) mode = ISM_ITEMWATCH;
+            if (_stricmp(section, "DisabledItemWatch") == 0) mode = ISM_DISABLED_ITEMWATCH;
+            if (_stricmp(section, "Sliders") == 0) mode = ISM_SLIDERS;
             continue;
         }
         switch( mode )
@@ -4188,7 +4254,7 @@ void ImportSettings( char* filename )
             break;
 
         case ISM_CONFIG:
-            if( sscanf( buffer, "%255[^:]::%255[^\n]\n", Keyword, Value ) != EOF )
+            if( sscanf( buffer, "%255[^:]::%255[^\n]\n", Keyword, Value ) == 2 )
             {
                 i = 0, Id = -1;
                 while( CfgKeywords[ i ].keyword )
@@ -4478,31 +4544,17 @@ void ImportSettings( char* filename )
         }
     }
 
-    fclose( fp );
+    BOOL ok = !ferror(fp);
+    fclose(fp);
+    return ok;
 }
 
-BOOL ExportSettings( char* filename )
+static void WriteSettings(FILE *fp)
 {
-    FILE* fp;
     pusRect Rect = {0};
     PUU32 Record;
     PUU8* pString;
     unsigned int Val = 0;
-    char* myfilename;
-    size_t myfilename_size = strlen(filename) + 5;
-
-    myfilename = malloc(myfilename_size);
-    if (!myfilename) return FALSE;
-
-    safe_strcpy(myfilename, myfilename_size, filename);
-    if( !strstr( myfilename, ".cs" ) ) safe_strcat(myfilename, myfilename_size, ".cs" );
-
-    if( !( fp = fopen( myfilename, "w" ) ) )
-    {
-        free( myfilename );
-        return FALSE;
-    }
-    free( myfilename );
     fprintf( fp, "::Config::\n" );
     fprintf( fp, "AODIR::%s\n", g_AODir );
 
@@ -4668,7 +4720,35 @@ BOOL ExportSettings( char* filename )
     fprintf( fp, "::END::\n" );
     if( g_AIAutoMode )
         fprintf( fp, "::RENEE::\n" );
-    return fclose( fp ) == 0;
+}
+
+static BOOL ExportSettings(const char *filename, const char *backup)
+{
+    char path[MAX_PATH + 24], temp[MAX_PATH + 40], backupTemp[MAX_PATH + 40];
+    size_t length = strlen(filename);
+    const char *extension = length >= 3 && _stricmp(filename + length - 3, ".cs") == 0
+        ? "" : ".cs";
+    if (snprintf(path, sizeof(path), "%s%s", filename, extension) >= sizeof(path))
+        return FALSE;
+    snprintf(temp, sizeof(temp), "%s.clicksaver.tmp", path);
+    FILE *fp = fopen(temp, "w");
+    if (!fp) return FALSE;
+
+    // Finish the new file before touching either saved copy. A failed write
+    // leaves the current settings and the previous complete backup intact.
+    WriteSettings(fp);
+    BOOL ok = !ferror(fp) && fflush(fp) == 0 && _commit(_fileno(fp)) == 0;
+    if (fclose(fp) != 0) ok = FALSE;
+    if (ok && backup && IsCompleteSettingsFile(path)) {
+        snprintf(backupTemp, sizeof(backupTemp), "%s.clicksaver.tmp", backup);
+        ok = CopyFileA(path, backupTemp, FALSE) &&
+            MoveFileExA(backupTemp, backup, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        if (!ok) DeleteFileA(backupTemp);
+    }
+    if (ok)
+        ok = MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (!ok) DeleteFileA(temp);
+    return ok;
 }
 
 void DisplayErrorMessage( PUU8* _pMessage, PUU32 _bAsynchronous )

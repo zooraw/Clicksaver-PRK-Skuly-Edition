@@ -723,7 +723,7 @@ extern PUU8 g_MishNumber;
 
 PUU32 MissionSetAttr( PULID _Object, PULID _Class, void* _pData, PUU32 _Attr, PUU32 _Val );
 PUU32 MissionParse( PULID _Object, MissionClassData* _pData, PUU8* _pMissionData );
-PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 _ObjId, PUU32 _ValId );
+PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 rewardIndex );
 PUU32 SetAndSearch( PUU8* _pSrcString, PULID _TextEntry, PULID _List, PUU8** ppMatch );
 PUU32 SetAndSearchType( PUU32 TempVal, PULID _TextEntry );
 PUU32 ItemMatch( PUU8* ItemName, PUU8* ItemSearch );
@@ -756,6 +756,24 @@ static PUU32 AddItemValue(PUU32 _Total, PUU32 _Value)
 PUU8 GetAODBItem( MissionItem* _pMissionItem, PUU32 _ItemKey );
 void GetMissionItem( MissionItem* _pMissionItem, PUU32 _ItemKey1, PUU32 _ItemKey2, PUU32 _QL );
 PUU8 *GetAOIconData( unsigned long lIconNo );
+
+#define REWARD_IMAGE(id) PU_ACTION_OBJDEF, id, (PUU32)"Image", \
+    PUA_CONTROL_FRAME, PUFRAME_INFOBOX, \
+    PUA_IMAGE_WIDTH, 48, PUA_IMAGE_HEIGHT, 48, PUA_IMAGE_PIXFORMAT, 24, 0, 0
+
+static void SetRewardImage(MissionClassData *mission, PUU32 rewardIndex, PUU32 iconKey)
+{
+    BOOL team = mission->pCol == mission->pTeamCol;
+    PUU32 imageId = team ? TEAM_IMAGE1 + rewardIndex : IMAGE;
+    // Each control borrows its pixels until it is updated or destroyed.
+    // Slot 0 belongs to solo missions, with one slot per team reward after it.
+    PUU8 **pixels = &mission->rewardImages[team ? 1 + rewardIndex : 0];
+    PUU8 *previous = *pixels;
+    *pixels = iconKey ? GetAOIconData(iconKey) : NULL;
+    puSetAttribute(puGetObjectFromCollection(mission->pCol, imageId),
+        PUA_IMAGE_DATA, (PUU32)*pixels);
+    free(previous);
+}
 PUU32 MissionFind( PUU8* _pMissionDesc, PUU32 _DescLen, PUU8* _pItemName );
 void MissionPF( PUS32 _PFNum, PUU8* _pPFString );
 long FindStr( PUU8* a_xBuf, unsigned long lBufLen, PUU8* a_xFind, unsigned long lFindLen );
@@ -863,12 +881,7 @@ static PUU32 ColDefSingle[] =
         PU_ENDGROUP,
 
         PUM_ADDCHILD, PU_VERGROUP,
-            PUM_ADDCHILD, PU_ACTION_OBJDEF, IMAGE, ( PUU32 )"Image",
-                PUA_CONTROL_FRAME, PUFRAME_INFOBOX,
-                PUA_IMAGE_WIDTH, 48,
-                PUA_IMAGE_HEIGHT, 48,
-                PUA_IMAGE_PIXFORMAT, 24,
-                0, 0,
+            PUM_ADDCHILD, REWARD_IMAGE( IMAGE ),
         PU_ENDGROUP,
     PU_ENDGROUP,
 
@@ -941,6 +954,7 @@ static PUU32 ColDefTeam[] =
                 PUA_FOLD_FOLDED, TRUE,
                 PUA_FOLD_CONTENTS, PU_VERGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW1, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE1 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM1, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL1, ( PUU32 )"TextEntry",
@@ -957,6 +971,7 @@ static PUU32 ColDefTeam[] =
                     0, 0,
             PU_ENDGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW2, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE2 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM2, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL2, ( PUU32 )"TextEntry",
@@ -973,6 +988,7 @@ static PUU32 ColDefTeam[] =
                     0, 0,
             PU_ENDGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW3, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE3 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM3, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL3, ( PUU32 )"TextEntry",
@@ -989,6 +1005,7 @@ static PUU32 ColDefTeam[] =
                     0, 0,
             PU_ENDGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW4, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE4 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM4, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL4, ( PUU32 )"TextEntry",
@@ -1005,6 +1022,7 @@ static PUU32 ColDefTeam[] =
                     0, 0,
             PU_ENDGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW5, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE5 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM5, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL5, ( PUU32 )"TextEntry",
@@ -1021,6 +1039,7 @@ static PUU32 ColDefTeam[] =
                     0, 0,
             PU_ENDGROUP,
             PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMROW6, ( PUU32 )"HorGroup", PUA_CONTROL_KEEPROOM, FALSE, 0,
+                PUM_ADDCHILD, REWARD_IMAGE( TEAM_IMAGE6 ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEM6, ( PUU32 )"TextEntry", PUA_TEXTENTRY_READONLY, TRUE, 0, 0,
                 PUM_ADDCHILD, PU_LABEL( "Value:" ),
                 PUM_ADDCHILD, PU_ACTION_OBJDEF, ITEMVAL6, ( PUU32 )"TextEntry",
@@ -1070,7 +1089,7 @@ PUU32 MissionClassHandler( PULID _Object, PULID _Class, void* _pData, PUU32 _Met
         pData->pCol = pData->pSingleCol;
 
         pData->CashStr[ 0 ] = 0;
-        pData->pImageData = NULL;
+        memset(pData->rewardImages, 0, sizeof(pData->rewardImages));
 
         puSetAttribute( _Object, PUA_CONTAINER_CONTENTS, puGetObjectFromCollection( pData->pCol, ROOTOBJ ) );
         return TRUE;
@@ -1078,10 +1097,8 @@ PUU32 MissionClassHandler( PULID _Object, PULID _Class, void* _pData, PUU32 _Met
     case PUM_DELETE:
         puDeleteObjectCollection( pData->pSingleCol );
         puDeleteObjectCollection( pData->pTeamCol );
-        if( pData->pImageData )
-        {
-            free( pData->pImageData );
-        }
+        for (PUU32 i = 0; i < 1 + MAX_VISIBLE_MISSION_REWARDS; i++)
+            free(pData->rewardImages[i]);
         return puDoSuperMethod( _Object, _Class, _MethodID, _Param1, _Param2 );
 
 
@@ -1304,7 +1321,7 @@ PUU32 MissionParse( PULID _Object, MissionClassData* _pData, PUU8* _pMissionData
 
     for( i = 0; i < NumItems; i++ ) {
         Item* currentItem = pItem++;
-        PUU32 flags = ShowItem( _pData, currentItem, i + ITEM1, i + ITEMVAL1 );
+        PUU32 flags = ShowItem( _pData, currentItem, i );
         bItemNameMatch |= (flags & 1);
         bRewardMatched |= (flags & 1);
         bValueMatch |= ((flags >> 1) & 1);
@@ -1334,12 +1351,13 @@ PUU32 MissionParse( PULID _Object, MissionClassData* _pData, PUU8* _pMissionData
     if( NumItems == 0 && (!g_BuyingAgentCount || g_bForceUIRefresh) ) {
         puSetAttribute( puGetObjectFromCollection( _pData->pCol, ITEMVAL1 ), PUA_TEXTENTRY_VALUE, 0 );
         puSetAttribute( puGetObjectFromCollection( _pData->pCol, ITEM1 ), PUA_TEXTENTRY_BUFFER, 0 );
-        puSetAttribute( puGetObjectFromCollection( _pData->pSingleCol, IMAGE ), PUA_IMAGE_DATA, 0 );
+        SetRewardImage(_pData, 0, 0);
     }
 
     if( (!g_BuyingAgentCount || g_bForceUIRefresh) && _pData->pCol == _pData->pTeamCol ) {
-        for( ; i < 6; i++ )
-            puSetAttribute( puGetObjectFromCollection( _pData->pCol, i + ITEMROW1 ), PUA_CONTROL_HIDDEN, TRUE );
+        for (i = 0; i < MAX_VISIBLE_MISSION_REWARDS; i++)
+            puSetAttribute(puGetObjectFromCollection(_pData->pCol, ITEMROW1 + i),
+                PUA_CONTROL_HIDDEN, i >= NumItems);
         puSetAttribute( puGetObjectFromCollection( _pData->pCol, FOLD ), PUA_FOLD_HILIGHT, bItemNameMatch ? TRUE : FALSE );
     }
 
@@ -1426,7 +1444,7 @@ PUU32 MissionParse( PULID _Object, MissionClassData* _pData, PUU8* _pMissionData
     return (PUU32)_pMissionData;
 }
 
-PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 _ObjId, PUU32 _ValID )
+PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 rewardIndex )
 {
     PUU32 ItemKey1, ItemKey2, QL;
     PUU32 bNameMatch = FALSE;
@@ -1440,13 +1458,20 @@ PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 _ObjId, PUU32 _Val
     QL = _pItem->QL;
     QL = EndianSwap32( QL );
 
-    puSetAttribute( puGetObjectFromCollection( _pData->pCol, _ObjId ), PUA_CONTROL_HIDDEN, FALSE );
+    BOOL visible = rewardIndex < MAX_VISIBLE_MISSION_REWARDS;
+    BOOL refreshImage = visible && (!g_BuyingAgentCount || g_bForceUIRefresh);
+    PULID item = visible ? puGetObjectFromCollection(_pData->pCol, ITEM1 + rewardIndex) : 0;
+    PULID value = visible ? puGetObjectFromCollection(_pData->pCol, ITEMVAL1 + rewardIndex) : 0;
 
-    if( ItemKey1 == 0x6af2 && ItemKey2 == 0x6af3 && (!g_BuyingAgentCount || g_bForceUIRefresh) )
+    if( ItemKey1 == 0x6af2 && ItemKey2 == 0x6af3 )
     {
-        puSetAttribute( puGetObjectFromCollection( _pData->pCol, _ObjId ), PUA_TEXTENTRY_BUFFER, 0 );
-        if( _pData->pCol == _pData->pSingleCol )
-            puSetAttribute( puGetObjectFromCollection( _pData->pSingleCol, IMAGE ), PUA_IMAGE_DATA, 0 );
+        memset(&_pData->Reward, 0, sizeof(_pData->Reward));
+        if (refreshImage) {
+            puSetAttribute(item, PUA_TEXTENTRY_BUFFER, 0);
+            puSetAttribute(value, PUA_TEXTENTRY_VALUE, 0);
+            puSetAttribute(value, PUA_TEXTENTRY_HILIGHT, FALSE);
+            SetRewardImage(_pData, rewardIndex, 0);
+        }
     }
     else
     {
@@ -1454,28 +1479,24 @@ PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 _ObjId, PUU32 _Val
         WriteLog( "reward\t%u\t%u\t%u\t%s\n", ItemKey1, ItemKey2, QL, _pData->Reward.pName );
 
         sprintf( TempStr, "QL%u %s", QL, _pData->Reward.pName );
-        bNameMatch = SetAndSearch( TempStr, puGetObjectFromCollection( _pData->pCol, _ObjId ), g_ItemWatchList, NULL );
+        bNameMatch = SetAndSearch( TempStr, item, g_ItemWatchList, NULL );
 
         PUU32 itemValue = GetAdjustedItemValue(_pData->Reward.Value);
-        puSetAttribute( puGetObjectFromCollection( _pData->pCol, _ValID ), PUA_TEXTENTRY_VALUE, itemValue );
+        puSetAttribute( value, PUA_TEXTENTRY_VALUE, itemValue );
 
         PUU32 singleThreshold = puGetAttribute( puGetObjectFromCollection( g_pCol, CS_ITEMVALUE_SINGLE ), PUA_TEXTENTRY_VALUE );
         if( itemValue > singleThreshold )
         {
-            puSetAttribute( puGetObjectFromCollection( _pData->pCol, _ValID ), PUA_TEXTENTRY_HILIGHT, TRUE );
+            puSetAttribute( value, PUA_TEXTENTRY_HILIGHT, TRUE );
             if( PUL_GET_CB( CS_ITEMVALUE_MSINGLE ) ) bValueMatch = TRUE;
         }
         else
         {
-            puSetAttribute( puGetObjectFromCollection( _pData->pCol, _ValID ), PUA_TEXTENTRY_HILIGHT, FALSE );
+            puSetAttribute( value, PUA_TEXTENTRY_HILIGHT, FALSE );
         }
 
-        if( (!g_BuyingAgentCount || g_bForceUIRefresh) && _pData->pCol == _pData->pSingleCol )
-        {
-            if( _pData->pImageData ) free( _pData->pImageData );
-            _pData->pImageData = GetAOIconData( _pData->Reward.IconKey );
-            puSetAttribute( puGetObjectFromCollection( _pData->pSingleCol, IMAGE ), PUA_IMAGE_DATA, (PUU32)_pData->pImageData );
-        }
+        if (refreshImage)
+            SetRewardImage(_pData, rewardIndex, _pData->Reward.IconKey);
     }
 
     return (bNameMatch ? 1 : 0) | (bValueMatch ? 2 : 0);
