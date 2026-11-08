@@ -1460,6 +1460,7 @@ PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 rewardIndex )
 
     BOOL visible = rewardIndex < MAX_VISIBLE_MISSION_REWARDS;
     BOOL refreshImage = visible && (!g_BuyingAgentCount || g_bForceUIRefresh);
+    // Extra rewards still count for matching and value, but have no UI row.
     PULID item = visible ? puGetObjectFromCollection(_pData->pCol, ITEM1 + rewardIndex) : 0;
     PULID value = visible ? puGetObjectFromCollection(_pData->pCol, ITEMVAL1 + rewardIndex) : 0;
 
@@ -1482,18 +1483,12 @@ PUU32 ShowItem( MissionClassData* _pData, Item* _pItem, PUU32 rewardIndex )
         bNameMatch = SetAndSearch( TempStr, item, g_ItemWatchList, NULL );
 
         PUU32 itemValue = GetAdjustedItemValue(_pData->Reward.Value);
-        puSetAttribute( value, PUA_TEXTENTRY_VALUE, itemValue );
+        if (value) puSetAttribute(value, PUA_TEXTENTRY_VALUE, itemValue);
 
         PUU32 singleThreshold = puGetAttribute( puGetObjectFromCollection( g_pCol, CS_ITEMVALUE_SINGLE ), PUA_TEXTENTRY_VALUE );
-        if( itemValue > singleThreshold )
-        {
-            puSetAttribute( value, PUA_TEXTENTRY_HILIGHT, TRUE );
-            if( PUL_GET_CB( CS_ITEMVALUE_MSINGLE ) ) bValueMatch = TRUE;
-        }
-        else
-        {
-            puSetAttribute( value, PUA_TEXTENTRY_HILIGHT, FALSE );
-        }
+        BOOL highlight = itemValue > singleThreshold;
+        if (value) puSetAttribute(value, PUA_TEXTENTRY_HILIGHT, highlight);
+        if (highlight && PUL_GET_CB(CS_ITEMVALUE_MSINGLE)) bValueMatch = TRUE;
 
         if (refreshImage)
             SetRewardImage(_pData, rewardIndex, _pData->Reward.IconKey);
@@ -1624,7 +1619,8 @@ PUU32 SetAndSearch( PUU8* _pSrcString, PULID _TextEntry, PULID _List, PUU8** ppM
     PUU8 c;
     PUU8* pChar;
 
-    if( !g_BuyingAgentCount || g_bForceUIRefresh ) {
+    BOOL show = _TextEntry && (!g_BuyingAgentCount || g_bForceUIRefresh);
+    if (show) {
         puSetAttribute( _TextEntry, PUA_TEXTENTRY_BUFFER, (PUU32)_pSrcString );
     }
 
@@ -1751,7 +1747,7 @@ PUU32 SetAndSearch( PUU8* _pSrcString, PULID _TextEntry, PULID _List, PUU8** ppM
                         g_bOverrideMatch = 1;
                     }
                     
-                    if( !g_BuyingAgentCount || g_bForceUIRefresh ) {
+                    if (show) {
                         puSetAttribute( _TextEntry, PUA_TEXTENTRY_HILIGHT,
                             puGetAttribute( puGetObjectFromCollection( g_pCol, CS_HIGHLIGHTITEM_CB ), PUA_CHECKBOX_CHECKED ) );
                     }
@@ -1763,7 +1759,7 @@ PUU32 SetAndSearch( PUU8* _pSrcString, PULID _TextEntry, PULID _List, PUU8** ppM
                     if( ppMatch ) {
                         *ppMatch = _strdup((char*)pString);
                     }
-                    if( !g_BuyingAgentCount || g_bForceUIRefresh ) {
+                    if (show) {
                         puSetAttribute( _TextEntry, PUA_TEXTENTRY_HILIGHT,
                             puGetAttribute( puGetObjectFromCollection( g_pCol, CS_HIGHLIGHTLOC_CB ), PUA_CHECKBOX_CHECKED ) );
                     }
@@ -1774,7 +1770,7 @@ PUU32 SetAndSearch( PUU8* _pSrcString, PULID _TextEntry, PULID _List, PUU8** ppM
         Record = puDoMethod( _List, PUM_TABLE_GETNEXTRECORD, Record, 0 );
     }
 
-    if( !g_BuyingAgentCount || g_bForceUIRefresh ) {
+    if (show) {
         puSetAttribute( _TextEntry, PUA_TEXTENTRY_HILIGHT, FALSE );
     }
     return FALSE;
